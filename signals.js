@@ -1,97 +1,118 @@
-const canvas=document.querySelector('#sleep-signals-canvas');
-if(canvas){
- const ctx=canvas.getContext('2d'),container=canvas.closest('.sleep-signals'),heading=document.querySelector('#current-sleep-stage');
+/* Home page signal panel. Plays real recordings, one 30 second epoch at a time:
+   EEG and eye movement from a public sleep-lab night (Sleep-EDF) with the prototype
+   model's own stage estimate for each epoch, and a separate public head-worn
+   accelerometer recording. Data comes from sleep-data.js (tools/build-sleep-data.py).
+   After each short run of epochs the playhead skips ahead to another part of the hour.
+   Each epoch is read, the model's estimate appears, then the human scorer's label is
+   revealed next to it with a match or miss. */
+(()=>{
+ const canvas=document.querySelector('#sleep-signals-canvas'),D=window.DELTA_SLEEP;
+ if(!canvas||!D)return;
+ const ctx=canvas.getContext('2d'),container=canvas.closest('.sleep-signals'),heading=document.querySelector('#current-sleep-stage'),$=id=>document.getElementById(id),verdict=container.querySelector('.signal-verdict');
  const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
- const fs=128,capacity=fs*180,data=Array.from({length:6},()=>new Float32Array(capacity));
- let seed=0x6d7a12b9;const random=()=>{seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return (seed>>>0)/4294967296;};
- const white=()=>((random()+random()+random()+random())-2)*1.732;
- const definitions={N1:{label:'N1 / FALLING ASLEEP',short:'N1',color:'#9aabb4',hz:5.9,amp:6.5},N2:{label:'N2 / LIGHT SLEEP',short:'N2 / LIGHT SLEEP',color:'#43858b',hz:5.1,amp:5.0},N3:{label:'N3 / DEEP SLEEP',short:'N3 / DEEP SLEEP',color:'#65658f',hz:1.18,amp:19},REM:{label:'REM / RAPID EYE MOVEMENTS',short:'REM',color:'#a77f66',hz:5.5,amp:4.2},Awake:{label:'BRIEF AWAKENING',short:'AWAKE',color:'#c0a062',hz:10.5,amp:6.0}};
- const stages=[];let end=0;
- function append(name,duration){
-  const stage={name,start:end,end:end+duration,events:[],eyes:[],moves:[]};end=stage.end;
-  if(name==='N2'){
-   for(let t=stage.start+2.2+random()*1.4;t<stage.end-2.2;t+=5+random()*4.2){stage.events.push({type:'K-complex',time:t,amp:33+random()*10,duration:.7});if(t+2.2<stage.end-1)stage.events.push({type:'Sleep spindle',time:t+1.3+random()*.7,amp:8+random()*4,duration:.75+random()*.6,frequency:12+random()*2.2});}
-  }
-  if(name==='REM'||name==='Awake')for(let t=stage.start+.5;t<stage.end;t+=1+random()*2.8)stage.eyes.push({time:t,amp:9+random()*10,duration:.10+random()*.18});
-  if(name==='Awake')stage.moves.push({time:stage.start+.35,amp:18,duration:.22});
-  else if(random()<.35)stage.moves.push({time:stage.start+duration*(.3+random()*.5),amp:3+random()*4,duration:.14});
-  stages.push(stage);
+ const bytes=s=>{const b=atob(s),a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a;};
+ const X=new Int8Array(bytes(D.x).buffer),ACC=new Int16Array(bytes(D.acc).buffer);
+ const PLAY=D.runs.flat(),N=PLAY.length,FIRST=new Set(D.runs.map(r=>r[0])),HOUR=D.hourTrue.length,ACCN=ACC.length/N/3;
+ const STAGES=[
+  {key:'Awake',code:'W',label:'AWAKE',color:'#c0a062',ink:'#e3c07a'},
+  {key:'N1',code:'N1',label:'N1 / FALLING ASLEEP',color:'#9aabb4',ink:'#c3d0d6'},
+  {key:'N2',code:'N2',label:'N2 / LIGHT SLEEP',color:'#43858b',ink:'#6fc0c7'},
+  {key:'N3',code:'N3',label:'N3 / DEEP SLEEP',color:'#65658f',ink:'#a3a3dc'},
+  {key:'REM',code:'REM',label:'REM / RAPID EYE MOVEMENTS',color:'#a77f66',ink:'#dba888'}];
+ const argmax=a=>a.indexOf(Math.max(...a)),PRED=D.p.map(argmax),TRUE=PLAY.map(i=>D.hourTrue[i]);
+ const clamp=x=>x<0?0:x>1?1:x,seg=(t,a,b)=>clamp((t-a)/(b-a)),ease=x=>1-Math.pow(1-x,3),mix=(a,b,t)=>a+(b-a)*t;
+ const wrap=k=>(k%N+N)%N;
+ const FONT=getComputedStyle(document.body).fontFamily||'Arial';
+ const DUR=3000,SWEEP=.46,DECIDE=.58,REVEAL=.70;  // ms per epoch; when the signal is fully read, when the model answers, when the scorer's label is shown
+ let width=600,height=300,visible=true,k=0,t=reduced?.999:0,previous=performance.now(),shown=-1;
+ {let agree=0;for(let i=0;i<HOUR;i++)if(D.hourTrue[i]===D.hourPred[i])agree++;const el=$('sv-tally');if(el)el.textContent=`MODEL AND SCORER AGREED ON ${agree} OF ${HOUR} EPOCHS IN THIS HOUR`;}
+
+ function resize(){const r=canvas.getBoundingClientRect();if(!r.width)return;width=r.width;height=r.height;const dpr=Math.min(devicePixelRatio||1,2);canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);draw();}
+ function clock(i){const s=(D.meta.start+i)*30,h=Math.floor(s/3600),m=Math.floor(s%3600/60);return `${h}:${String(m).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;}
+
+ function setReadout(){
+  const phase=t<DECIDE?0:t<REVEAL?1:2,key=k*3+phase;if(key===shown)return;shown=key;
+  const q=PRED[k],st=STAGES[q],ok=q===TRUE[k];
+  if(phase){heading.textContent=st.label;heading.dataset.stage=st.key;}else{heading.textContent='READING 30 SECONDS';delete heading.dataset.stage;}
+  canvas.dataset.focusStage=st.key;canvas.dataset.epoch=String(PLAY[k]);
+  if(!verdict)return;
+  verdict.dataset.result=phase<2?'pending':ok?'match':'miss';
+  $('sv-est').textContent=phase?st.code:'…';$('sv-est').style.color=phase?st.ink:'';
+  $('sv-conf').textContent=phase?Math.round(D.p[k][q]*100)+'% SURE':'READING';
+  $('sv-true').textContent=phase===2?STAGES[TRUE[k]].code:'…';$('sv-true').style.color=phase===2?STAGES[TRUE[k]].ink:'';
+  $('sv-when').textContent=clock(PLAY[k])+' INTO THE NIGHT';
+  $('sv-match').textContent=phase<2?'':ok?'✓ MATCH':'✕ MISS';
  }
- append('N1',11.8);append('N2',26.5);append('N3',29.4);append('N2',16.8);append('REM',23.5);append('Awake',2.4);
- function extend(until){
-  while(end<until){const previous=stages.at(-1).name,r=random();let name;
-   if(previous==='N1')name='N2';
-   else if(previous==='N2')name=r<.36?'N3':r<.70?'REM':r<.9?'N2':'Awake';
-   else if(previous==='N3')name='N2';
-   else if(previous==='REM')name=r<.25?'Awake':'N2';
-   else name='N1';
-   const ranges={N1:[10,15],N2:[18,34],N3:[22,32],REM:[19,30],Awake:[1.5,2.8]},[a,b]=ranges[name];append(name,a+random()*(b-a));
+
+ function draw(){
+  const small=width<430,gutter=small?52:74,right=width-6,plotW=right-gutter,prev=wrap(k-1);
+  const hypTop=4,hypRow=small?8:9,lanesTop=hypTop+hypRow*2+16,probH=small?40:30,axisH=15,lanesBot=height-probH-axisH-8;
+  const sweep=seg(t,0,SWEEP),run=ease(seg(t,SWEEP,DECIDE)),decided=t>=DECIDE,fade=FIRST.has(PLAY[k])?ease(seg(t,0,.1)):1;
+  setReadout();
+  ctx.clearRect(0,0,width,height);ctx.textBaseline='middle';ctx.lineJoin='round';
+  const label=(text,y,color='#ffffffbb')=>{ctx.font=`${small?7:8}px ${FONT}`;ctx.textAlign='right';ctx.fillStyle=color;ctx.fillText(text,gutter-9,y);};
+
+  /* the hour this night comes from: human scorer above, model below */
+  const cw=plotW/HOUR;label('SCORER',hypTop+hypRow/2);label('MODEL',hypTop+hypRow*1.5+2);
+  for(let i=0;i<HOUR;i++){
+   const x=gutter+i*cw,w=Math.max(.6,cw-.6);ctx.globalAlpha=.5;
+   ctx.fillStyle=STAGES[D.hourTrue[i]].color;ctx.fillRect(x,hypTop,w,hypRow);
+   ctx.fillStyle=STAGES[D.hourPred[i]].color;ctx.fillRect(x,hypTop+hypRow+2,w,hypRow);
   }
- }
- const noise=new Float64Array(6),phase=new Float64Array(2),drift=new Float64Array(2);let breathPhase=0,generated=0,genStage=0;
- const gaussian=(time,center,sigma)=>{const z=(time-center)/sigma;return Math.abs(z)>5?0:Math.exp(-.5*z*z);};
- function generate(until){
-  extend(until+30);const target=Math.ceil(until*fs);
-  while(generated<=target){
-   const t=generated/fs;while(stages[genStage].end<=t)genStage++;const stage=stages[genStage],def=definitions[stage.name],age=t-stage.start;
-   const n=[];for(let ch=0;ch<6;ch++){const w=white();noise[ch]=noise[ch]*.89+w*.23;n[ch]=noise[ch]*2.1+w*.8;}
-   const channels=[];
-   for(let ch=0;ch<2;ch++){
-    drift[ch]=drift[ch]*.999+white()*.0008;phase[ch]+=2*Math.PI*(def.hz+drift[ch]+.10*Math.sin(t*.39+ch))/fs;
-    let v=def.amp*Math.sin(phase[ch])*(.7+.18*Math.sin(t*.61+ch))+n[ch]*2.7;
-    if(stage.name==='N3')v+=7*Math.sin(t*2*Math.PI*.68+ch*.12)+2.4*Math.sin(t*2*Math.PI*3.1);
-    else v+=1.8*Math.sin(t*2*Math.PI*(16.7+ch*.6)+Math.sin(t*.24));
-    if(stage.name==='Awake')v+=n[ch]*4+7*Math.sin(t*2*Math.PI*19.3)*Math.exp(-age*.8);
-    for(const event of stage.events){
-     const d=t-event.time;if(Math.abs(d)>2)continue;
-     if(event.type==='K-complex')v+=event.amp*(-gaussian(d,.10,.065)+.62*gaussian(d,.34,.135))*(ch===0?1:.78);
-     else if(d>=0&&d<event.duration){const envelope=Math.sin(Math.PI*d/event.duration)**2;v+=event.amp*envelope*Math.sin(2*Math.PI*event.frequency*d+ch*.5);}
-    }
-    channels.push(v);
-   }
-   let eyes=stage.name==='N1'?10*Math.sin(t*2*Math.PI*.28+Math.sin(t*.12)):0;
-   for(const event of stage.eyes)eyes+=event.amp*(gaussian(t,event.time,event.duration)-.75*gaussian(t,event.time+.25,event.duration*1.15));
-   channels.push(eyes+n[2]*1.4,-eyes*.83+n[3]*1.5);
-   breathPhase+=2*Math.PI*(.215+.012*Math.sin(t*.17)+(stage.name==='REM'?.025*Math.sin(t*.9):0))/fs;
-   channels.push((10+2*Math.sin(t*.23))*Math.sin(breathPhase)+n[4]*.7);
-   let motion=n[5]*.65;for(const event of stage.moves)motion+=event.amp*gaussian(t,event.time,event.duration)*(Math.sin((t-event.time)*36)+.6);
-   channels.push(motion);
-   for(let ch=0;ch<6;ch++)data[ch][generated%capacity]=channels[ch];generated++;
+  ctx.globalAlpha=1;
+  D.runs.forEach(r=>{ctx.fillStyle='#ffffff30';ctx.fillRect(gutter+r[0]*cw,hypTop+hypRow*2+5,r.length*cw,1.5);});
+  const jump=ease(seg(t,0,.1)),px=gutter+mix(PLAY[prev],PLAY[k],jump)*cw;
+  ctx.strokeStyle='#fff';ctx.lineWidth=1.2;ctx.strokeRect(px-1,hypTop-1.5,cw+2,hypRow*2+5);
+  ctx.fillStyle='#fff';ctx.fillRect(px+cw/2-.5,hypTop+hypRow*2+3.5,1,7);
+
+  /* lanes: EEG, eye movement, head motion */
+  const lanes=[{name:small?'EEG':'EEG / Fpz-Cz',w:1.35},{name:small?'EYES':'EYE MOVEMENT',w:1},{name:small?'MOTION':'HEAD MOTION',w:.75}],total=lanes.reduce((s,l)=>s+l.w,0);
+  let y=lanesTop;for(const lane of lanes){lane.top=y;lane.h=(lanesBot-lanesTop)*lane.w/total;lane.mid=y+lane.h/2;y+=lane.h;}
+  ctx.font=`${small?7:8}px ${FONT}`;
+  for(let s=0;s<=30;s+=5){
+   const x=Math.round(gutter+s/30*plotW)+.5;ctx.strokeStyle='#ffffff12';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,lanesTop);ctx.lineTo(x,lanesBot);ctx.stroke();
+   ctx.fillStyle='#ffffff80';ctx.textAlign=s===0?'left':s===30?'right':'center';ctx.fillText(s+' s',s===0?gutter:s===30?right:x,lanesBot+9);
   }
+  lanes.forEach((lane,i)=>{label(lane.name,lane.mid);if(i){ctx.fillStyle='#ffffff14';ctx.fillRect(gutter,Math.round(lane.top),plotW,1);}});
+  if(!small){ctx.font=`7px ${FONT}`;ctx.textAlign='right';ctx.fillStyle='#ffffff70';ctx.fillText('X / Y / Z  g',gutter-9,lanes[2].mid+11);}
+
+  ctx.save();ctx.beginPath();ctx.rect(gutter,lanesTop,plotW,lanesBot-lanesTop);ctx.clip();
+  const cut=gutter+sweep*plotW;
+  const trace=(count,value,color,lw)=>{                  // faint for what is still to come, solid for what has been read
+   const path=new Path2D();for(let i=0;i<count;i++){const x=gutter+i/(count-1)*plotW,yy=value(i);i?path.lineTo(x,yy):path.moveTo(x,yy);}
+   ctx.strokeStyle=color;ctx.lineWidth=lw;
+   ctx.save();ctx.beginPath();ctx.rect(cut,lanesTop,right-cut,lanesBot-lanesTop);ctx.clip();ctx.globalAlpha=.2*fade;ctx.stroke(path);ctx.restore();
+   ctx.save();ctx.beginPath();ctx.rect(gutter,lanesTop,cut-gutter,lanesBot-lanesTop);ctx.clip();ctx.globalAlpha=fade;ctx.stroke(path);ctx.restore();
+  };
+  [['#ffffff',.85],['#bfeaf0',.85]].forEach(([color,lw],c)=>{const base=(k*2+c)*3000,lane=lanes[c],amp=lane.h*.42/127;trace(3000,i=>lane.mid-X[base+i]*amp,color,lw);});
+  const m=lanes[2],gScale=m.h*.36;['#ffffff','#bfeaf0','#8fb7c2'].forEach((color,a)=>{const base=(k*3+a)*ACCN;trace(ACCN,i=>m.mid-(ACC[base+i]/1000-.45)*gScale,color,.9);});
+  if(sweep>0&&sweep<1){
+   const g=ctx.createLinearGradient(cut-34,0,cut,0);g.addColorStop(0,'#ffffff00');g.addColorStop(1,'#ffffff1c');ctx.fillStyle=g;ctx.fillRect(cut-34,lanesTop,34,lanesBot-lanesTop);
+   ctx.fillStyle='#fff';ctx.fillRect(cut-.5,lanesTop,1,lanesBot-lanesTop);
+  }
+  ctx.restore();
+
+  /* what the model makes of it: probability for each stage, settling once the epoch is complete */
+  const pTop=height-probH,cols=small?3:5,rowsN=Math.ceil(5/cols),cellW=plotW/cols,cellH=probH/rowsN,now=D.p[k],before=D.p[prev],top=decided?PRED[k]:-1;
+  label(t<SWEEP?'READING':decided?'ESTIMATE':'STAGING',pTop+probH/2,t>=SWEEP&&!decided?'#fff':'#ffffffbb');
+  for(let i=0;i<5;i++){
+   const st=STAGES[i],p=mix(before[i],now[i],run),x=gutter+(i%cols)*cellW,yy=pTop+Math.floor(i/cols)*cellH+cellH/2,isTop=i===top,bw=cellW-(small?58:66);
+   ctx.globalAlpha=t<SWEEP?.55:1;
+   ctx.font=`${isTop?600:400} ${small?8:9}px ${FONT}`;ctx.textAlign='left';ctx.fillStyle=isTop?st.ink:'#ffffffb0';ctx.fillText(st.code,x,yy);
+   ctx.fillStyle='#ffffff14';ctx.fillRect(x+26,yy-2,bw,4);ctx.fillStyle=st.color;ctx.fillRect(x+26,yy-2,bw*p,4);
+   ctx.font=`${small?7:8}px ${FONT}`;ctx.fillStyle=isTop?'#fff':'#ffffff90';ctx.fillText(Math.round(p*100)+'%',x+30+bw,yy);
+  }
+  ctx.globalAlpha=1;
  }
- function value(t,ch){const index=t*fs,a=Math.floor(index),u=index-a;return data[ch][a%capacity]*(1-u)+data[ch][(a+1)%capacity]*u;}
- const channelNames=['EEG / LEFT','EEG / RIGHT','EYE / LEFT','EYE / RIGHT','BREATHING','MOVEMENT'];let width=600,height=420,visible=true,clock=0,previous=performance.now(),lastStage=-1;
- function resize(){const r=canvas.getBoundingClientRect();width=r.width;height=r.height;const dpr=Math.min(devicePixelRatio,2);canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);}
+
+ function advance(d){t+=d;while(t>=1){t-=1;k=wrap(k+1);}}
+ function tick(now){
+  requestAnimationFrame(tick);const dt=Math.min(now-previous,100);if(dt<16)return;previous=now;if(document.hidden||!visible)return;
+  if(!reduced)advance(dt/DUR);
+  draw();
+ }
  new ResizeObserver(resize).observe(canvas);resize();
  if('IntersectionObserver' in window)new IntersectionObserver(entries=>{visible=entries[0].isIntersecting;}).observe(container);
- function draw(){
-  const gutter=width<430?61:80,right=width-8,plotWidth=right-gutter,windowSeconds=width<430?10:18,start=clock,endTime=start+windowSeconds;generate(endTime+2);
-  ctx.clearRect(0,0,width,height);const yTop=64,yBottom=height-30,row=(yBottom-yTop)/6;ctx.font='8px Manrope,Arial';ctx.textBaseline='middle';ctx.fillStyle='#ffffffbb';
-  channelNames.forEach((label,i)=>{ctx.textAlign='right';ctx.fillText(label,gutter-9,yTop+row*(i+.5));});
-  const x=t=>gutter+(t-start)/windowSeconds*plotWidth,focus=start+windowSeconds*.55;
-  const currentIndex=stages.findIndex(s=>s.start<=focus&&s.end>focus),current=stages[currentIndex];
-  if(currentIndex!==lastStage){heading.textContent=definitions[current.name].label;heading.dataset.stage=current.name;lastStage=currentIndex;}
-  canvas.dataset.windowStart=start.toFixed(3);canvas.dataset.focusStage=current.name;canvas.dataset.sampleProbe=JSON.stringify({index:Math.floor(start/5)*5*fs,values:data.map(channel=>channel[(Math.floor(start/5)*5*fs)%capacity])});canvas.dataset.sampleAnchor=JSON.stringify({index:Math.floor(focus*fs),values:data.map(channel=>channel[Math.floor(focus*fs)%capacity])});
-  ctx.save();ctx.beginPath();ctx.rect(gutter,0,plotWidth,height);ctx.clip();
-  const labels=[],visibleEvents=[];
-  for(const stage of stages){
-   if(stage.end<start||stage.start>endTime)continue;const def=definitions[stage.name],left=x(stage.start),w=x(stage.end)-left;
-   ctx.fillStyle=def.color;ctx.globalAlpha=.12;ctx.fillRect(left,0,w,yBottom);ctx.globalAlpha=.72;ctx.fillRect(left,0,w,24);ctx.globalAlpha=1;
-   ctx.save();ctx.beginPath();ctx.rect(left+1,0,w-2,24);ctx.clip();ctx.fillStyle='white';ctx.textAlign='left';ctx.font='9px Manrope,Arial';ctx.fillText(def.short,left+6,13);ctx.restore();labels.push({stage:stage.name,x:Number(left.toFixed(1))});
-   for(const event of stage.events){
-    if(event.time+event.duration<start||event.time>endTime)continue;visibleEvents.push(event.type);const ex=x(event.time),ey=event.type==='K-complex'?36:49,color=event.type==='K-complex'?'#e97680':'#d6b775',ew=event.duration/windowSeconds*plotWidth;ctx.fillStyle=color;ctx.globalAlpha=.14;ctx.fillRect(ex,yTop,ew,row*2);ctx.globalAlpha=.9;ctx.fillRect(ex,yTop-5,ew,3);ctx.globalAlpha=1;ctx.fillStyle=color;ctx.font='8px Manrope,Arial';ctx.textAlign='left';ctx.fillText(event.type,ex+3,ey);ctx.strokeStyle='#ffffff40';ctx.lineWidth=.6;ctx.beginPath();ctx.moveTo(ex,ey+5);ctx.lineTo(ex,yTop+row*.20);ctx.stroke();
-   }
-  }
-  canvas.dataset.movingLabels=JSON.stringify(labels);canvas.dataset.events=JSON.stringify(visibleEvents);
-  for(let ch=0;ch<6;ch++){
-   const baseline=yTop+row*(ch+.5),scale=ch<2?.64:ch<4?.7:.8;ctx.lineWidth=.45;ctx.strokeStyle='#ffffff15';ctx.beginPath();ctx.moveTo(gutter,baseline);ctx.lineTo(right,baseline);ctx.stroke();
-   ctx.lineWidth=.85;ctx.strokeStyle=ch<2?'#ffffffed':'#ffffffb8';ctx.beginPath();
-   const first=Math.max(0,Math.floor(start*fs)-1),last=Math.ceil(endTime*fs)+1;for(let index=first;index<=last;index++){const px=x(index/fs),py=baseline+data[ch][index%capacity]*scale;if(index===first)ctx.moveTo(px,py);else ctx.lineTo(px,py);}ctx.stroke();
-  }
-  ctx.strokeStyle='#ffffff50';ctx.lineWidth=.6;ctx.beginPath();ctx.moveTo(x(focus),24);ctx.lineTo(x(focus),yBottom);ctx.stroke();
-  ctx.fillStyle='#ffffff70';ctx.font='7px Manrope,Arial';ctx.textAlign='center';ctx.fillText('CURRENT STAGE',x(focus),height-8);
-  ctx.restore();
- }
- function tick(now){requestAnimationFrame(tick);const dt=Math.min((now-previous)/1000,.1);if(now-previous<33)return;previous=now;if(document.hidden||!visible)return;if(!reduced)clock+=dt*1.25;draw();}
- draw();requestAnimationFrame(tick);
-}
+ if(document.fonts&&document.fonts.ready)document.fonts.ready.then(draw);
+ requestAnimationFrame(tick);
+})();
