@@ -23,3 +23,16 @@
 .flow-canvas{position:relative;flex:1 1 auto;min-height:330px;margin-top:1.2rem}.flow-canvas canvas{position:absolute;inset:0;width:100%;height:100%;display:block}.network-card .diagram-note{margin:.8rem 0 0;text-align:left}
 .flow-foot{display:flex;justify-content:space-between;align-items:baseline;gap:.6rem 1.5rem;flex-wrap:wrap;border-top:1px solid #ffffff3f;margin-top:1rem;padding-top:1rem}.flow-foot .model-lab-number{border:0;margin:0;padding:0}.flow-foot .model-lab-number strong{font-size:clamp(1.8rem,2.6vw,2.4rem)}.flow-foot>a{margin-top:0}
 @media(max-width:800px){.tracking .signal-plot{height:320px}.flow-canvas{flex:none;height:360px}.signal-verdict{gap:1rem}.signal-verdict>strong{margin-left:0}}
+
+/* Keep the product in frame on portrait screens. The wide film needs its own
+   stage rather than a center crop that shows only the nose and wordmark. */
+@media(max-width:600px){
+  .opening{height:100svh;min-height:640px}
+  .opening video{position:absolute;top:18%;left:0;width:100%;height:50%;object-fit:contain;object-position:center;transform:none;filter:brightness(.72)}
+  .hero-words{bottom:9%;left:6%;right:6%}
+  .hero-words h1{font-size:clamp(42px,11vw,58px)}
+  .benefit video.backdrop{top:8%;height:60%;object-fit:contain;object-position:center;transform:none}
+  .focus-right video.backdrop{transform:none}
+  .benefit-copy h2{font-size:clamp(38px,10vw,49px)}
+  .material-pair video{object-fit:contain;background:#000}
+}
