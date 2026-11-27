@@ -138,12 +138,12 @@ try{
   });
   original.parent.add(pair);original.parent.remove(original);pairBoxes.set(left,boundsOf(left));pairBoxes.set(right,boundsOf(right));return pair;
  }
- new GLTFLoader().load('./assets/mask.glb?v=8',g=>{
+ new GLTFLoader().load('./assets/mask.glb?v=27',g=>{
   model=g.scene;model.position.y=-.008;scene.add(model);
   const colors={shell:0x272b2d,frame:0x191d20,padding:0x22282a,comfort:0x282e30,light:0xb5ad9b,sensing:0x22292a,fit:0x24282b,audio:0x51300f,power:0x343b3e};
   for(const key of Object.keys(colors)){
    let object=model.getObjectByName(key);if(!object)continue;
-   object.traverse(o=>{if(!o.isMesh)return;correctMorphNormals(o.geometry);const old=o.material,name=old?.name||'',metal=/Metal|Copper/.test(name);let color=metal?(/Copper/.test(name)?0xa86f35:0xb9bfc3):/Flex PCB/.test(name)?0x8f591e:/Chip body/.test(name)?0x171a1d:colors[key];o.material=new THREE.MeshStandardMaterial({color,roughness:metal?.17:key==='comfort'?.95:.8,metalness:metal?.98:.02,side:THREE.FrontSide});o.castShadow=true;o.receiveShadow=true;if(metal){o.material.polygonOffset=true;o.material.polygonOffsetFactor=-1;o.material.polygonOffsetUnits=-1;}if(key==='light'){o.material.polygonOffset=true;o.material.polygonOffsetFactor=1;o.material.polygonOffsetUnits=1;lightMaterials.push(o.material);}if(key==='frame'){o.material.polygonOffset=true;o.material.polygonOffsetFactor=2;o.material.polygonOffsetUnits=2;}});
+   object.traverse(o=>{if(!o.isMesh)return;correctMorphNormals(o.geometry);const old=o.material,name=old?.name||'',metal=/Metal|Copper/.test(name);let color=metal?(/Copper/.test(name)?new THREE.Color().setRGB(.70,.61,0):0xb9bfc3):/Flex PCB/.test(name)?new THREE.Color().setRGB(.72156864,.47450981,.14117648):/Chip body/.test(name)?0x171a1d:colors[key];o.material=new THREE.MeshStandardMaterial({color,roughness:metal?.17:key==='comfort'?.95:.8,metalness:metal?.98:.02,side:THREE.FrontSide});o.castShadow=true;o.receiveShadow=true;if(metal){o.material.polygonOffset=true;o.material.polygonOffsetFactor=-1;o.material.polygonOffsetUnits=-1;}if(key==='light'){o.material.polygonOffset=true;o.material.polygonOffsetFactor=1;o.material.polygonOffsetUnits=1;lightMaterials.push(o.material);}if(key==='frame'){o.material.polygonOffset=true;o.material.polygonOffsetFactor=2;o.material.polygonOffsetUnits=2;}});
    if(['fit','audio','power'].includes(key))object=splitPair(object);parts[key]=object;flatBoxes[key]=boundsOf(object);object.position.copy(basePosition(key));
   }
   const cloth=document.createElement('canvas');cloth.width=1024;cloth.height=512;const ctx=cloth.getContext('2d');ctx.fillStyle='#272b2d';ctx.fillRect(0,0,1024,512);const grain=ctx.createImageData(1024,512);let grainSeed=0x915f36a;for(let i=0;i<grain.data.length;i+=4){grainSeed^=grainSeed<<13;grainSeed^=grainSeed>>>17;grainSeed^=grainSeed<<5;const n=((grainSeed>>>0)%17)-8;grain.data[i]=39+n;grain.data[i+1]=43+n;grain.data[i+2]=45+n;grain.data[i+3]=255;}ctx.putImageData(grain,0,0);const texture=new THREE.CanvasTexture(cloth);texture.colorSpace=THREE.SRGBColorSpace;texture.anisotropy=8;
@@ -174,7 +174,7 @@ try{
    for(const material of lightMaterials){material.emissive.set(0xffad58);material.emissiveIntensity=glow*1.8;}sunrise.intensity=glow*.045;
    const visibleWidth=active==='fit'?.67:active?Math.max(.30,plan?.width||.30):.28+.39*flat;
    const width=visibleWidth,depth=.18*(1-flat)+.03*flat+(plan?.depth||0)*openness;
-   const mobile=camera.aspect<1.2,frameScale=mobile?(active?.6:.72):(active?.9:1);const target=Math.max(.38,(width/(2*Math.tan(THREE.MathUtils.degToRad(17))*camera.aspect)*1.15+depth*.35)*frameScale);distance=THREE.MathUtils.lerp(distance,target,blend);camera.position.set(0,.10,-distance);camera.lookAt(0,.015,.005);renderer.toneMappingExposure=THREE.MathUtils.lerp(renderer.toneMappingExposure,active?1.38:1.12,blend);
+   const mobile=camera.aspect<1.2,frameScale=mobile?(active?.6:.60):(active?.9:1);const target=Math.max(mobile?.37:.38,(width/(2*Math.tan(THREE.MathUtils.degToRad(17))*camera.aspect)*1.15+depth*.35)*frameScale);distance=THREE.MathUtils.lerp(distance,target,blend);camera.position.set(0,.10,-distance);camera.lookAt(0,.015,.005);renderer.toneMappingExposure=THREE.MathUtils.lerp(renderer.toneMappingExposure,active?1.38:1.12,blend);
   }
   if(phase!=='charging')renderer.render(scene,camera);
  }requestAnimationFrame(frame);

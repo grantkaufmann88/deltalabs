@@ -35,4 +35,5 @@
   .focus-right video.backdrop{transform:none}
   .benefit-copy h2{font-size:clamp(38px,10vw,49px)}
   .material-pair video{object-fit:contain;background:#000}
+  .explorer .model-stage{height:310px;min-height:310px}
 }
