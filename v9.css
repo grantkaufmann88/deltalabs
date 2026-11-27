@@ -36,4 +36,6 @@
   .benefit-copy h2{font-size:clamp(38px,10vw,49px)}
   .material-pair video{object-fit:contain;background:#000}
   .explorer .model-stage{height:310px;min-height:310px}
+  .app-page .app-intro{min-height:40vh;padding:110px 7vw 2rem}
+  .app-page .app-showcase{padding-top:2rem}
 }
