@@ -39,3 +39,5 @@
   .app-page .app-intro{min-height:40vh;padding:110px 7vw 2rem}
   .app-page .app-showcase{padding-top:2rem}
 }
+
+@media(max-width:600px){.opening video{transform:scale(1.16)}}
